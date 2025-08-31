@@ -33,7 +33,9 @@ public class AuthService {
         authmanager.authenticate(
                 new UsernamePasswordAuthenticationToken(request.getUsername(), request.getPassword())
         );
-        UserDetails user = (UserDetails) userRepository.findByUsername(request.getUsername()).orElseThrow();
-        return JwtUtil.generateToken(user);
+        UserDetails user = (UserDetails) userRepository.findByUsername(request.getUsername())
+                .orElseThrow();
+
+        return jwtUtil.generateToken(user);
     }
 }
