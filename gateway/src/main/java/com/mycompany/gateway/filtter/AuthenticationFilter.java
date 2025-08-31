@@ -1,7 +1,10 @@
 package com.mycompany.gateway.filtter;
 
 import io.jsonwebtoken.Claims;
+
+import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.gateway.filter.GatewayFilter;
 import org.springframework.cloud.gateway.filter.factory.AbstractGatewayFilterFactory;
@@ -12,7 +15,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
-import java.io.ObjectInputFilter;
+import java.nio.charset.StandardCharsets;
+import java.security.Key;
 
 
 @Component
@@ -42,26 +46,42 @@ public class AuthenticationFilter extends AbstractGatewayFilterFactory<Authentic
             String token = authHeader.substring(7);
 
             try {
-                Claims claims = Jwts.parser()
-                        .setSigningKey(secretKey)
+                Key key = Keys.hmacShaKeyFor(secretKey.getBytes(StandardCharsets.UTF_8));
+                Claims claims = Jwts.parserBuilder()
+                        .setSigningKey(key)
+                        .build()
                         .parseClaimsJws(token)
                         .getBody();
 
-                ServerHttpRequest mutatedRequest = exchange.getRequest()
-                        .mutate()
-                        .header("X-User-Id", claims.getSubject())
-                        .build();
+                // Add claims into request headers
+
+                return chain.filter(
+                        exchange.mutate()
+                                .request(exchange.getRequest().mutate()
+                                        .header("X-User-Id", claims.getSubject())
+                                        .build())
+                                .build()
+                );
+
+            }
+            catch (ExpiredJwtException e) {
+                return this.onError(exchange, "JWT Token Expired", HttpStatus.UNAUTHORIZED);
             }
             catch (Exception e) {
                 return this.onError(exchange, "Invalid JWT Token ", HttpStatus.UNAUTHORIZED);
             }
-            // Temporary logic - just pass through
-            return chain.filter(exchange);
         };
     }
 
     private Mono<Void> onError(ServerWebExchange exchange, String str, HttpStatus httpStatus) {
         exchange.getResponse().setStatusCode(httpStatus);
-        return exchange.getResponse().setComplete();
+        exchange.getResponse().getHeaders().add(HttpHeaders.CONTENT_TYPE, "application/json");
+
+        String errorJson = String.format("{\"error\":\"%s\",\"status\":%d}", str,httpStatus.value());
+        byte[] bytes = errorJson.getBytes(StandardCharsets.UTF_8);
+
+        return exchange.getResponse().writeWith(Mono.just(
+                exchange.getResponse().bufferFactory().wrap(bytes)
+        ));
     }
 }
